@@ -15,14 +15,69 @@ io.on("connection", (user: Socket) => {
     `++ user: ${ansiColors.greenBright(user.id)} | ${io.sockets.sockets.size}`
   );
   user.emit("connected");
+  user.emit("rooms_change", [...user.rooms]);
 
   user.on("create_room", (roomId: string) => {
-    if (io.sockets.adapter.rooms.has(roomId)) {
-      user.emit("room_exists", roomId);
+    if (roomId && !roomId.startsWith("admin:"))
+      if (io.sockets.adapter.rooms.has(roomId)) {
+        user.emit("room_exists", roomId);
+        return;
+      }
+    user.join(roomId);
+    user.join(`admin:${roomId}`);
+    user.emit("room_created", roomId);
+
+    user.emit("rooms_change", [...user.rooms]);
+  });
+
+  user.on(
+    "accept_join",
+    ({
+      userId,
+      roomId,
+      accept,
+    }: {
+      userId: string;
+      roomId: string;
+      accept: boolean;
+    }) => {
+      if (user.rooms.has(`admin:${roomId}`)) {
+        if (accept) {
+          const requesterUser: Socket | undefined =
+            io.sockets.sockets.get(userId);
+          requesterUser?.join(roomId);
+          requesterUser?.emit("rooms_change", [...user.rooms]);
+
+          user.to(userId).emit("join_accepted", {
+            roomId,
+          });
+        }
+      }
+    }
+  );
+
+  user.on("join_room_ask", (roomId: string) => {
+    if (!io.sockets.adapter.rooms.has(roomId)) {
+      user.emit("join_room_ask_res", { exists: false, roomId });
       return;
     }
-    user.join(roomId);
-    user.emit("room_created", roomId);
+    user.emit("join_room_ask_res", { exists: true, roomId });
+
+    user.to(`admin:${roomId}`).emit("join_room_ask", {
+      userId: user.id,
+      roomId,
+    });
+  });
+
+  user.on(
+    "join_room_ask_res",
+    ({ roomId, userId }: { userId: string; roomId: string }) => {
+      user.emit("join_room_ask", { roomId, userId });
+    }
+  );
+
+  user.on("join_accepted", ({ roomId }: { roomId: string }) => {
+    user.emit("join_accepted", { roomId });
   });
 
   user.on("check_room_exists", (roomId: string) => {
